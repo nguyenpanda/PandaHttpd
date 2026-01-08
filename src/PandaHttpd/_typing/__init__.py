@@ -1,9 +1,8 @@
-import typing
-
 from .base import *
 from .http import *
 from .network import *
 from .server import *
+
 
 __all__ = [
     # base
@@ -22,6 +21,6 @@ __all__ = [
     'HTTPStatusLine',
     
     # server
-    'HandlerFunc',
+    'HandleFunc',
 ]
 

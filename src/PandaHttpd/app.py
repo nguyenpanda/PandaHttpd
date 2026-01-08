@@ -1,48 +1,65 @@
+from .http import HttpStatus, JsonResponse, Response
+from .router import Router, Route
+from ._typing import Socket, ResponseFunc
+from .utils.logger import PandaLogger
+
 import socket
 import threading
-from typing import Dict, Tuple, Callable, Optional
+
+from typing import Type, Tuple, Callable, Optional, Sequence, Any
 from pathlib import Path
 from nguyenpanda.swan import green, blue
 
-from .utils.logger import PandaLogger
-from .typing import HandlerFunc
 
 class PandaHttpd:
     
     def __init__(self, 
         server_ip: str = '0.0.0.0', 
         server_port: int = 80,
+        routes: Optional[Sequence[Route]] = None,
+        default_handler: Optional[ResponseFunc] = None,
         logger: Optional[PandaLogger] = None,
-    ) -> None:
-        
+    ):
         self.server_ip: str = str(server_ip)
         self.server_port: int = int(server_port)
+        self.router: Router = Router(routes=routes, default_handler=default_handler)
         
         self.logger = logger.setup() \
             if isinstance(logger, PandaLogger) \
             else PandaLogger()
-        
-        self.routes: Dict[Tuple[str, str], HandlerFunc] = {}
         self.logger.info(f'HookAPI Initialized with IP: {self.server_ip}, Port: {self.server_port}')
 
-    def route(self, path: str, method: str = 'GET') -> Callable[[HandlerFunc], HandlerFunc]:
-        def decorator(func: HandlerFunc) -> HandlerFunc:
-            self.routes[(path, method.upper())] = func
+    def route(self, 
+        path: str, method: str = 'GET',
+        response_class: Type[Response] = JsonResponse,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            self.router.add_route(
+                path=path, 
+                method=method, 
+                endpoint=func,
+                response_class=response_class,
+            )
             self.logger.info(f'[Registered]: [{method.upper():^6}] `{blue(func.__name__)}` -> `{green(path)}`')
             return func
+        
         return decorator
+        
+    def _recive_all(self, connection: Socket) -> bytes:
+        data = []
+        while True:
+            chunk = connection.recv(4096)
+            if not chunk:
+                break
+            data.append(chunk)
+            if b'\r\n\r\n' in chunk:
+                break
+        return b''.join(data)
 
-    def handle_client(self, client_connection: socket.socket, client_address: Tuple[str, int]) -> None:
+    def handle_client(self, client_connection: Socket, client_address: Tuple[str, int]) -> None:
         try:
-            raw_data = b''
-            while True:
-                chunk = client_connection.recv(4096)
-                if not chunk:
-                    break
-                raw_data += chunk
-                if b'\r\n\r\n' in raw_data:
-                    break
-            
+            raw_data = self._recive_all(client_connection)
             if not raw_data:
                 return
 
@@ -71,21 +88,11 @@ class PandaHttpd:
             real_ip: str = headers.get('cf-connecting-ip', client_address[0])
             self.logger.info(f"[Requested] IP=`{real_ip}` | Method=`{method}` | Path=`{path}`")
             
-            handler: Optional[HandlerFunc] = self.routes.get((path, method))
-            
-            response: bytes
-            if handler:
-                response = handler()
-            # elif method == 'GET':
-            #     static_response = self.serve_file_logic(path) 
-            #     if static_response:
-            #         response = static_response
-            #     else:
-            #         response = self.not_found()
-            else:
-                response = self.not_found()
-
-            client_connection.sendall(response)
+            route: Optional[Route] = self.router.find_route(path, method)
+            response: Response = route.handle(headers, *[], **{}) \
+                if route \
+                else self.router.default_handler(headers, *[], **{})
+            response(client_connection, None)
             
             try:
                 client_connection.shutdown(socket.SHUT_WR)
@@ -95,21 +102,6 @@ class PandaHttpd:
             self.logger.error(f"Error handling client {client_address}: {e}")
         finally:
             client_connection.close()
-          
-    def not_found(self) -> bytes:
-        img_path = Path(__file__).parent.parent / 'src' / 'assets' / 'errors' / '404.html'
-        
-        if img_path.exists():
-            with open(img_path, 'r', encoding='utf-8') as f:
-                body = f.read()
-        else:
-            body = "<h1>404 Not Found</h1>"
-
-        header = "HTTP/1.1 404 Not Found\r\n"
-        header += "Content-Type: text/html; charset=utf-8\r\n"
-        header += f"Content-Length: {len(body.encode('utf-8'))}\r\n"
-        header += "Connection: close\r\n\r\n"
-        return (header + body).encode()
 
     def run(self) -> None:
         self.logger.warning(f'Server running at http://{self.server_ip}:{self.server_port}')
@@ -135,3 +127,7 @@ class PandaHttpd:
         finally:
             server_socket.close()
             
+    def set_default_handler(self, handler: ResponseFunc) -> None:
+        self.router.set_default_handler(handler)
+        self.logger.info(f'Default handler set to `{handler.__name__}`')
+        

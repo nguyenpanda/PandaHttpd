@@ -3,14 +3,26 @@ import datetime
 import sys
 import re
 from pathlib import Path
-from typing import Optional
-from nguyenpanda.swan import green, red, yellow, blue
+from typing import Any, Optional
 
-def magenta(text: str) -> str:
-    return f'\033[1;95m{text}\033[0m'
 
-def cyan(text: str) -> str:
-    return f'\033[1;96m{text}\033[0m'
+def green(text: Any) -> str:
+    return f'\033[38;5;22;48;5;157m{text}\033[0m'
+
+def yellow(text: Any) -> str:
+    return f'\033[38;5;94;48;5;229m{text}\033[0m'
+
+def magenta(text: Any) -> str:
+    return f'\033[38;5;53;48;5;225m{text}\033[0m'
+
+def red(text: Any) -> str:
+    return f'\033[38;5;88;48;5;217m{text}\033[0m'
+
+def fatal(text: Any) -> str:
+    return f'\033[38;5;52;48;5;210m{text}\033[0m'
+
+def time_style(text: Any) -> str:
+    return f'\033[38;5;23;48;5;195m{text}\033[0m'
 
 
 class ColoredConsoleFormatter(logging.Formatter):
@@ -20,7 +32,7 @@ class ColoredConsoleFormatter(logging.Formatter):
 		logging.WARNING: ('WARN', yellow),
 		logging.DEBUG: ('DEBUG', magenta),
 		logging.ERROR: ('ERROR', red),
-		logging.CRITICAL: ('FATAL', red),
+		logging.CRITICAL: ('FATAL', fatal),
 	}
     
     def format(self, record):
@@ -28,9 +40,11 @@ class ColoredConsoleFormatter(logging.Formatter):
         message = record.getMessage()
         
         label, color = self._map.get(record.levelno, (record.levelname, lambda x: x))
-        level_tag = color(f'[{label:^6}]')
+        
+        log_time = time_style(f'{log_time:^21}')
+        level_tag = color(f'{label:^6}')
 
-        return f'[{log_time}]{level_tag} {message}'
+        return f'{log_time}{level_tag} {message}'
 
 
 class FileFormatter(logging.Formatter):
@@ -56,7 +70,8 @@ class PandaLogger:
     def __init__(self, 
         logger_name: str = 'PandaLogger', 
         file_name: Optional[str] = None, 
-        save_dir: Optional[str | Path] = None
+        save_dir: Optional[str | Path] = None,
+        level: int | str = logging.INFO,
     ):
         self.logger_name = logger_name
         
@@ -67,10 +82,11 @@ class PandaLogger:
             if file_name is None \
             else file_name
         self.log_path = self.save_dir / self.log_filename
+        self.level = level
 
     def setup(self):
         self._logger = logging.getLogger(self.logger_name)
-        self._logger.setLevel(logging.INFO)
+        self._logger.setLevel(self.level)
         self._logger.handlers = []
         self._logger.propagate = False
 
@@ -86,6 +102,9 @@ class PandaLogger:
 
         self._logger.info(f'Logger initialized. File: {self.log_path}')
         return self
+    
+    def setLevel(self, level: int | str):
+        self._logger.setLevel(level)
         
     def __call__(self, message: str, level: str = 'info'):
         level = level.lower()

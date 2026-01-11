@@ -1,5 +1,6 @@
 from .status import HttpStatus
-from .respone import (
+from .request import Request
+from .response import (
     Response,
     PlainTextResponse,
     HtmlResponse,
@@ -17,8 +18,10 @@ from .respone import (
     RedirectResponse,
 )
 
+
 __all__ = [
     'HttpStatus',
+    'Request',
     'Response',
     'PlainTextResponse',
     'HtmlResponse',

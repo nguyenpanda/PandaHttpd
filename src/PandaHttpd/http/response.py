@@ -2,7 +2,7 @@ from .status import HttpStatus
 from .._typing import Socket
 
 import json
-from typing_extensions import Optional, Any
+from typing_extensions import Any, Dict, List, Optional
 
 
 class Response:
@@ -13,14 +13,14 @@ class Response:
 		status_code: int | HttpStatus = 200, 
   		body: Any = None,
     	media_type: Optional[str] = None,
-		dict_headers: Optional[dict[str, str]] = None,
+		dict_headers: Optional[Dict[str, str]] = None,
     ):
         self.status_code: HttpStatus = (status_code if isinstance(status_code, HttpStatus) else HttpStatus(status_code))
         if media_type is not None:
             self.media_type: str = media_type
-        self.headers: list[tuple[bytes, bytes]] = []
         self.body: bytes = self.render(body)
-        self.init_header(dict_headers)
+        self.list_headers: List[tuple[bytes, bytes]] = self.init_header(dict_headers)
+        self._header: Dict[bytes, bytes] = {}
     
     def render(self, content: Any) -> bytes:
         if content is None:
@@ -30,14 +30,14 @@ class Response:
         else:
             return content.encode(self.charset)
     
-    def init_header(self, dict_header: Optional[dict[str, str]] = None):
-        self.list_headers: list[tuple[bytes, bytes]]
+    def init_header(self, dict_header: Optional[Dict[str, str]] = None) -> List[tuple[bytes, bytes]]:
+        list_headers: List[tuple[bytes, bytes]]
         if dict_header is None:
-            self.list_headers = []
+            list_headers = []
             already_have_content_type = False
             already_have_content_length = False
         else:
-            self.list_headers = [
+            list_headers = [
                 (k.lower().encode(self.charset), v.encode(self.charset))
 				for k, v in dict_header.items()
     		]
@@ -51,18 +51,23 @@ class Response:
             and not (self.status_code < 200 or self.status_code in (204, 304))
         ):
             content_length = str(len(self.body))
-            self.list_headers.append((b'content-length', content_length.encode(self.charset)))
+            list_headers.append((b'content-length', content_length.encode(self.charset)))
             
         if (self.media_type is not None
             and already_have_content_type is False
         ):
             if self.media_type.startswith('text/') and 'charset=' not in self.media_type.lower():
                 self.media_type += '; charset=' + self.charset
-            self.list_headers.append((b'content-type', self.media_type.encode(self.charset)))
-        
+            list_headers.append((b'content-type', self.media_type.encode(self.charset)))
+        return list_headers
+    
     @property
-    def header(self):
-        pass
+    def header(self) -> Dict[bytes, bytes]:
+        if not self._header:
+            for k, v in self.list_headers:
+                self._header[k] = v
+            
+        return self._header
     
     def set_cookies(self,
         key: str,
@@ -83,7 +88,7 @@ class Response:
     def to_bytes(self) -> bytes:
         status_line = f'HTTP/1.1 {self.status_code} {self.status_code.phrase if hasattr(self.status_code, 'phrase') else ''} \r\n'.encode(self.charset)
         headers = b''
-        for k, v in self.list_headers:
+        for k, v in self.header.items():
             headers += k + b': ' + v + b'\r\n'
         headers += b'\r\n'
         return status_line + headers + self.body
@@ -100,7 +105,7 @@ class Response:
         
         if self.body:
             sender.sendall(self.body)
-
+            
 
 class PlainTextResponse(Response):
     media_type: str = 'text/plain'
@@ -167,7 +172,7 @@ class RedirectResponse(Response):
     def __init__(self, 
         location: str,
         status_code: int | HttpStatus = 302,
-        dict_headers: Optional[dict[str, str]] = None,
+        dict_headers: Optional[Dict[str, str]] = None,
     ):
         if dict_headers is None:
             dict_headers = {}

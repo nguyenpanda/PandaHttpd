@@ -1,7 +1,7 @@
-from .http.respone import JsonResponse, Response, PlainTextResponse
-from ._typing import ResponseFunc
+from .http.response import JsonResponse, Response, PlainTextResponse
+from ._typing import ResponseFunc, UserFunc
 
-from typing import Callable, Optional, Any, Sequence, Type
+from typing import Any, Callable, Dict, List, Optional, Sequence, Type
 
 
 class Route:
@@ -9,12 +9,12 @@ class Route:
     def __init__(self,
         path: str,
         method: str,
-        endpoint: Callable[..., Any],
+        endpoint: UserFunc,
         response_class: Type[Response] = JsonResponse,
     ):
         self.path: str = path
         self.method: str = method.upper()
-        self.endpoint: Callable[..., Any] = endpoint
+        self.endpoint: UserFunc = endpoint
         self.response_class: Type[Response] = response_class
         
         assert path.startswith('/'), 'Route path must start with "/"'
@@ -22,7 +22,7 @@ class Route:
         assert issubclass(self.response_class, Response) or self.response_class is None, 'Response class must be a subclass of Response or None'
     
     def handle(self, 
-        dict_headers: Optional[dict[str, str]],
+        dict_headers: Optional[Dict[str, str]],
         *args, **kwargs,
     ) -> Response:
         body = self.endpoint(*args, **kwargs)
@@ -42,7 +42,7 @@ class Router:
         routes: Optional[Sequence[Route]] = None,
         default_handler: Optional[ResponseFunc] = None,
     ):
-        self.routes: list[Route] = [] if routes is None else list(routes)
+        self.routes: List[Route] = [] if routes is None else list(routes)
         self.default_handler: ResponseFunc = \
             self.set_default_handler(default_handler) \
             if default_handler is not None \
@@ -51,7 +51,7 @@ class Router:
     def add_route(self, 
         path: str, 
         method: str, 
-        endpoint: Callable[..., Any],
+        endpoint: UserFunc,
         response_class: Type[Response] = JsonResponse,
     ) -> None:
         self.routes.append(Route(

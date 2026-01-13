@@ -1,8 +1,9 @@
 from .status import HttpStatus
 from .._typing import Socket
+from ..utils import MappingStr, CaseInsensitiveDict, CookieDict
 
 import json
-from typing_extensions import Any, Dict, List, Optional
+from typing_extensions import Any, Dict, List, Optional, Self
 
 
 class Response:
@@ -13,7 +14,7 @@ class Response:
 		status_code: int | HttpStatus = 200, 
   		body: Any = None,
     	media_type: Optional[str] = None,
-		dict_headers: Optional[Dict[str, str]] = None,
+		dict_headers: Optional[MappingStr] = None,
     ):
         self.status_code: HttpStatus = (status_code if isinstance(status_code, HttpStatus) else HttpStatus(status_code))
         if media_type is not None:
@@ -30,7 +31,7 @@ class Response:
         else:
             return content.encode(self.charset)
     
-    def init_header(self, dict_header: Optional[Dict[str, str]] = None) -> List[tuple[bytes, bytes]]:
+    def init_header(self, dict_header: Optional[MappingStr] = None) -> List[tuple[bytes, bytes]]:
         list_headers: List[tuple[bytes, bytes]]
         if dict_header is None:
             list_headers = []
@@ -69,6 +70,16 @@ class Response:
             
         return self._header
     
+    @property
+    def status_line(self) -> bytes:
+        return f'HTTP/1.1 {self.status_code.value} {self.status_code.phrase}\r\n'.encode(self.charset)
+    
+    def update_header(self, key: str, value: str) -> None:
+        k = key.lower().encode(self.charset)
+        v = value.encode(self.charset)
+        self.list_headers.append((k, v))
+        self._header[k] = v
+    
     def set_cookies(self,
         key: str,
         value: str,
@@ -84,24 +95,17 @@ class Response:
         max_age: Optional[int] = None,
     ):
         raise NotImplementedError()
-		
-    def to_bytes(self) -> bytes:
-        status_line = f'HTTP/1.1 {self.status_code} {self.status_code.phrase if hasattr(self.status_code, 'phrase') else ''} \r\n'.encode(self.charset)
-        headers = b''
-        for k, v in self.header.items():
-            headers += k + b': ' + v + b'\r\n'
-        headers += b'\r\n'
-        return status_line + headers + self.body
     
-    def __call__(self, sender: Socket, receiver: Optional[Socket]) -> None:
-        status_line = f'HTTP/1.1 {self.status_code.value} {self.status_code.phrase}\r\n'.encode(self.charset)
-
+    def __call__(self, 
+        sender: Socket, 
+        receiver: Optional[Socket], 
+    ) -> None:
         header_block = b''
         for k, v in self.list_headers:
             header_block += k + b': ' + v + b'\r\n'
         header_block += b'\r\n'
         
-        sender.sendall(status_line + header_block)
+        sender.sendall(self.status_line + header_block)
         
         if self.body:
             sender.sendall(self.body)
@@ -168,18 +172,28 @@ class GifResponse(Response):
     
     
 class RedirectResponse(Response):
+    media_type: str = 'text/plain'
     
     def __init__(self, 
-        location: str,
-        status_code: int | HttpStatus = 302,
-        dict_headers: Optional[Dict[str, str]] = None,
+        body: Dict[str, Any] | None = None,
+        url: str | None = None,
+        status_code: int | HttpStatus = 301, 
+        dict_headers: CaseInsensitiveDict | None = None
     ):
+        body_params = {}
+        if body is not None:
+            body_params = {str(k).lower(): v for k, v in body.items()}
+            
+        target_url = url if url is not None else body_params.get('location')
+        if not target_url:
+            raise ValueError("RedirectResponse requires a 'url' argument or a 'location' key in the body.")
+        
         if dict_headers is None:
-            dict_headers = {}
-        dict_headers['Location'] = location
+            dict_headers = CaseInsensitiveDict()
+        dict_headers['Location'] = target_url
+        
         super().__init__(
-            status_code=status_code,
-            body='',
-            dict_headers=dict_headers,
+            status_code=body_params.get('status_code', status_code),
+            body=b'', 
+            dict_headers=dict_headers
         )
-    

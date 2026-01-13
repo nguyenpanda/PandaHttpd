@@ -22,5 +22,11 @@ __all__ = [
     
     # server
     'HandleFunc',
+    'PandaHttpd',
+    'GenericHandler',
+    'HeaderHandler',
+    'AnyHandler',
+    'UserFunc',
+    'HasPrefix',
 ]
 

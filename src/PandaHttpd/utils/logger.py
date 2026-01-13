@@ -83,6 +83,9 @@ class PandaLogger:
             else file_name
         self.log_path = self.save_dir / self.log_filename
         self.level = level
+        
+        self.file_formatter = None
+        self.console_formatter = None
 
     def setup(self):
         self._logger = logging.getLogger(self.logger_name)
@@ -91,13 +94,13 @@ class PandaLogger:
         self._logger.propagate = False
 
         fh = logging.FileHandler(self.log_path, encoding='utf-8')
-        file_formatter = FileFormatter(datefmt='%Y-%m-%d %H:%M:%S')
-        fh.setFormatter(file_formatter)
+        self.file_formatter = FileFormatter(datefmt='%Y-%m-%d %H:%M:%S')
+        fh.setFormatter(self.file_formatter)
         self._logger.addHandler(fh)
 
         sh = logging.StreamHandler(sys.stdout)
-        console_formatter = ColoredConsoleFormatter(datefmt='%Y-%m-%d %H:%M:%S')
-        sh.setFormatter(console_formatter)
+        self.console_formatter = ColoredConsoleFormatter(datefmt='%Y-%m-%d %H:%M:%S')
+        sh.setFormatter(self.console_formatter)
         self._logger.addHandler(sh)
 
         self._logger.info(f'Logger initialized. File: {self.log_path}')

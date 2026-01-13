@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
     "nguyenpanda>=1.0.0",
     "nguyenpanda-config>=0.1.1",
+    "psutil>=7.2.1",
     "pyyaml>=6.0.3",
     "typing-extensions>=4.15.0",
 ]
@@ -26,4 +27,5 @@ nguyenpanda-httpd = { workspace = true, editable = true }
 [dependency-groups]
 dev = [
     "nguyenpanda-httpd",
+    "pylint[spelling]>=4.0.4",
 ]

@@ -1,10 +1,12 @@
+from ..utils import CaseInsensitiveDict, CookieDict
+
 import enum
 import json
 
 from urllib.parse import parse_qs
 from nguyenpanda.swan import green
 
-from typing import Tuple, Dict, Optional
+from typing import Any, Tuple, Dict, Optional
 from .._typing import Socket
 
 
@@ -17,7 +19,7 @@ class ParseRequestBody:
         XML = 'application/xml'
 
     @staticmethod
-    def parse(content_type: str, content: bytes) -> Dict[str, str]:
+    def parse(content_type: str, content: bytes) -> Dict[str, Any]:
         _t = ParseRequestBody.Type
         if content_type.startswith((_t.FORM, _t.TEXT)):
             return ParseRequestBody.parse_form(content.decode('utf-8', 'ignore'))
@@ -29,7 +31,7 @@ class ParseRequestBody:
             raise TypeError(f'Unsupported Content-Type: {content_type}')
 
     @staticmethod
-    def parse_form(content: str) -> Dict[str, str]:
+    def parse_form(content: str) -> Dict[str, Any]:
         result = {}
         parsed = parse_qs(content)
         for k, v in parsed.items():
@@ -37,14 +39,14 @@ class ParseRequestBody:
         return result
 
     @staticmethod
-    def parse_json(content: bytes) -> Dict[str, str]:
+    def parse_json(content: bytes) -> Dict[str, Any]:
         try:
             return json.loads(content.decode('utf-8'))
         except Exception:
             raise ValueError('Invalid JSON body')
 
     @staticmethod
-    def parse_xml(content: bytes) -> Dict[str, str]:
+    def parse_xml(content: bytes) -> Dict[str, Any]:
         raise NotImplementedError('XML parsing not implemented')
     
 
@@ -60,9 +62,9 @@ class Request(HttpConnection):
         self._method: str = ''
         self._path: str = ''
         self._protocol: str = ''
-        self._headers: Dict[str, str] = {}
-        self._cookie: Dict[str, str] = {}
-        self._body: bytes | Dict[str, str] = b''
+        self._headers: CaseInsensitiveDict = CaseInsensitiveDict()
+        self._cookie: CookieDict = CookieDict()
+        self._body: bytes | Dict[str, Any] = b''
         self._raw_data: bytearray | None = None
 
     def handle(self):
@@ -79,14 +81,13 @@ class Request(HttpConnection):
         content_length = int(self._headers.get('content-length', 0))
         if content_length > 0:
             ct = self._headers.get('content-type', '')
-            print(ct)
             if self._method == 'POST' or self._method == 'PUT':
                 self._body = ParseRequestBody.parse(ct, body)
             else:
                 self._body = body
                 
         self._cookie = self._parse_cookie(self._headers.pop('cookie', None))
-            
+        
     @property
     def method(self) -> str:
         return self._method
@@ -96,22 +97,22 @@ class Request(HttpConnection):
         return self._path
 
     @property
-    def headers(self) -> Dict[str, str]:
+    def headers(self) -> CaseInsensitiveDict:
         return self._headers
 
     @property
-    def cookie(self) -> Dict[str, str]:
+    def cookie(self) -> CookieDict:
         return self._cookie
     
     @property
-    def body(self) -> bytes | Dict[str, str]:
+    def body(self) -> bytes | Dict[str, Any]:
         return self._body
     
     @property
     def protocol(self) -> str:
         return self._protocol
 
-    def _parse_header(self, raw_data: bytearray) -> Tuple[str, str, str, Dict[str, str]]:
+    def _parse_header(self, raw_data: bytearray) -> Tuple[str, str, str, CaseInsensitiveDict]:
         idx = raw_data.find(b'\r\n\r\n')
         header_bytes = raw_data[:idx]
             
@@ -123,23 +124,23 @@ class Request(HttpConnection):
         lines = header_str.split('\r\n')
         
         if not lines or not lines[0]:
-            return '', '', '', {}
+            return '', '', '', CaseInsensitiveDict()
 
         method, path, protocol = lines[0].split(None)
         
-        headers = {}
+        headers = CaseInsensitiveDict()
         for line in lines[1:]:
             if ':' in line:
                 key, value = line.split(':', 1)
-                headers[key.strip().lower()] = value.strip()
+                headers[key.strip()] = value.strip()
         
         return method.upper(), path, protocol, headers
         
-    def _parse_cookie(self, cookie_str: Optional[str]) -> Dict[str, str]:
+    def _parse_cookie(self, cookie_str: Optional[str]) -> CookieDict:
         if cookie_str is None:
-            return {}
+            return CookieDict()
         
-        cookie = {}
+        cookie = CookieDict()
         for pair in cookie_str.split(';'):
             if '=' in pair:
                 k, v = pair.strip().split('=', 1)

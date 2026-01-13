@@ -1,5 +1,7 @@
-from .status import HttpStatus
-from .request import Request
+from .request import (
+    HttpConnection, 
+    Request,
+)
 from .response import (
     Response,
     PlainTextResponse,
@@ -17,6 +19,7 @@ from .response import (
     GifResponse,
     RedirectResponse,
 )
+from .status import HttpStatus
 
 
 __all__ = [

@@ -78,7 +78,7 @@ class PandaHttpd:
     
     def set_default_handler(self, handler: GenericHandler) -> None:
         self.router.set_default_handler(handler)
-        self.logger.info(f'Default_handler set to `{lred(handler.__class__.__name__)}`')
+        self.logger.info(f'Default_handler set to `{lred(handler.__qualname__)}`')
 
     @property
     def ip(self) -> str:

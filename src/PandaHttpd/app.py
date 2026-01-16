@@ -4,6 +4,7 @@ from .middleware import Middleware, BaseMiddleware, DefaultMiddleware
 from .route import Router, BaseRoute
 from .utils import CaseInsensitiveDict, PandaLogger, lgreen, lred
 from ._typing import Socket, GenericHandler, HeaderHandler, UserFunc, HasPrefix
+from .worker import WorkerPool
 
 import asyncio
 import psutil
@@ -33,9 +34,14 @@ class PandaHttpd:
         self._ip: str = str(config.get('ip', '0.0.0.0'))
         self._port: int = int(config.get('port', 80))
         
-        # Initialize ThreadPoolExecutor for CPU-intensive tasks
-        max_workers: int = int(config.get('max_workers', psutil.cpu_count(False)))
-        self.executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=max_workers)
+        num_workers: int = int(config.get('num_workers', psutil.cpu_count(False) or 4))
+        executor_per_worker: int = int(config.get('executor_per_worker', 10))
+        
+        self.worker_pool: WorkerPool = WorkerPool(
+            num_workers=num_workers,
+            handle_client_func=self._handle_client_wrapper,
+            executor_size_per_worker=executor_per_worker,
+        )
         
         self.router: Router = Router(routes=routes, default_handler=default_handler)
         self.middle_ware: Middleware = Middleware(
@@ -46,7 +52,7 @@ class PandaHttpd:
             if isinstance(logger, PandaLogger) \
             else PandaLogger().setup()
         self.logger.debug(f'PandaHttpd Initialized with IP: {self.ip}, Port: {self.port}')
-        self.logger.info(f'ThreadPoolExecutor initialized with max_workers={max_workers}')
+        self.logger.info(f'WorkerPool initialized with {num_workers} workers, {executor_per_worker} executors per worker')
 
     def route(self, 
         path: str, method: str = 'GET',
@@ -103,10 +109,23 @@ class PandaHttpd:
     def prefix(self) -> str:
         return self._prefix
     
+    async def _handle_client_wrapper(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        executor: ThreadPoolExecutor,
+    ) -> None:
+        """
+        Wrapper for handle_client that accepts executor from worker.
+        This runs in the worker's event loop.
+        """
+        await self.handle_client(reader, writer, executor)
+    
     async def handle_client(
         self,
         reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter
+        writer: asyncio.StreamWriter,
+        executor: ThreadPoolExecutor,
     ) -> None:
         """Async client handler using StreamReader and StreamWriter"""
         client_address = writer.get_extra_info('peername')
@@ -128,12 +147,12 @@ class PandaHttpd:
             if not route:
                 self.logger.error(f'[Response] 404 Not Found: No route for {request.method} {request.path}, using default handler.')
                 # Use default handler
-                response = await self.router.not_found_handler(dict_headers, executor=self.executor)
+                response = await self.router.not_found_handler(dict_headers, executor=executor)
             else:
                 # Generate Response using route handler
                 response = await route.handle(
                     dict_headers=dict_headers,
-                    executor=self.executor,
+                    executor=executor,
                 )
             
             # Post-Middleware
@@ -155,29 +174,44 @@ class PandaHttpd:
             except Exception:
                 pass
             
-    async def _run(self) -> None:
-        """Main async server loop using asyncio.start_server"""
+    def _run(self) -> None:
+        """Main server loop - accepts connections and distributes to workers"""
         self.logger.info(f'Server running at {lgreen(f"http://{self.ip}:{self.port}")}')
         
+        self.worker_pool.start()
+        self.logger.info(f'Worker pool started with {self.worker_pool.num_workers} workers')
+        
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind((self.ip, self.port))
+        server_socket.listen(self.config.get('listen', 1000))
+        
+        server_socket.settimeout(1.0)
+        
         try:
-            server = await asyncio.start_server(
-                self.handle_client,
-                self.ip,
-                self.port,
-                backlog=self.config.get('listen', 1000)
-            )
-            
-            async with server:
-                self.logger.info(f'Asyncio server started, accepting connections...')
-                await server.serve_forever()
-                
+            self.logger.info('Accepting connections...')
+            while True:
+                try:
+                    client_socket, client_address = server_socket.accept()
+                    
+                    timeout = self.config.get('connection_timeout', 30)
+                    client_socket.settimeout(timeout)
+                    
+                    if not self.worker_pool.distribute_connection(client_socket):
+                        self.logger.warning(f'All workers busy, rejecting connection from {client_address}')
+                        client_socket.close()
+                        
+                except socket.timeout:
+                    continue
+                    
         except KeyboardInterrupt:
             self.logger.warning('Stopping server by user request...')
         finally:
-            self.logger.info('Shutting down ThreadPoolExecutor...')
-            self.executor.shutdown(wait=True)
+            self.logger.info('Shutting down worker pool...')
+            self.worker_pool.shutdown(wait=True)
+            server_socket.close()
             self.logger.info('Server shutdown complete')
             
     def run(self) -> None:
-        """Entry point to run the async server"""
-        asyncio.run(self._run())
+        """Entry point to run the server"""
+        self._run()

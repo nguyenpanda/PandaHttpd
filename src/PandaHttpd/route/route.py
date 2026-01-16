@@ -117,7 +117,6 @@ class Mount(BaseRoute):
                 return await response # type: ignore
             return response  # type: ignore
         
-        # Read file async using executor
         body: bytes | None = await self.endpoint(file_path, executor, *args, **kwargs)
         media_type, _ = mimetypes.guess_type(file_path)
         

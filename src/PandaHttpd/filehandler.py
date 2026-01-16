@@ -36,7 +36,6 @@ class FileHandler:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(executor, _sync_read)
         else:
-            # Fallback to asyncio.to_thread
             return await asyncio.to_thread(_sync_read)
         
     async def serve_file(

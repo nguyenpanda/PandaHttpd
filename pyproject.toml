@@ -29,4 +29,5 @@ dev = [
     "mypy>=1.19.1",
     "nguyenpanda-httpd",
     "pylint[spelling]>=4.0.4",
+    "requests>=2.32.5",
 ]

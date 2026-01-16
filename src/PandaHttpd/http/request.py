@@ -80,23 +80,33 @@ class Request(HttpConnection):
         if self.reader is None:
             raise ValueError('StreamReader not provided for async request handling')
             
-        self._raw_data = await self._recv_header()
-        if self._raw_data is None:
+        try:
+            self._raw_data = await self._recv_header()
+            if self._raw_data is None:
+                return
+            
+            self._method, self._path, self._protocol, self._headers = self._parse_header(self._raw_data)
+        except (ValueError, IndexError, UnicodeDecodeError):
+            # Malformed request headers
+            self._method = 'GET'
+            self._path = '/'
+            self._protocol = 'HTTP/1.1'
+            self._headers = CaseInsensitiveDict()
             return
         
-        self._method, self._path, self._protocol, self._headers \
-            = self._parse_header(self._raw_data)
-        
-        body = await self._recv_body(self._raw_data)
-        self._raw_data.extend(body)
-        
-        content_length = int(self._headers.get('content-length', 0))
-        if content_length > 0:
-            ct = self._headers.get('content-type', '')
-            if self._method == 'POST' or self._method == 'PUT':
-                self._body = ParseRequestBody.parse(ct, body)
-            else:
-                self._body = body
+        try:
+            body = await self._recv_body(self._raw_data)
+            self._raw_data.extend(body)
+            
+            content_length = int(self._headers.get('content-length', 0))
+            if content_length > 0:
+                ct = self._headers.get('content-type', '')
+                if self._method == 'POST' or self._method == 'PUT':
+                    self._body = ParseRequestBody.parse(ct, body)
+                else:
+                    self._body = body
+        except (ValueError, TypeError):
+            self._body = b''
                 
         self._cookie = self._parse_cookie(self._headers.pop('cookie', None))
         

@@ -75,7 +75,7 @@ class PandaLogger:
     ):
         self.logger_name = logger_name
         
-        self.save_dir = Path(save_dir) if save_dir else (Path.cwd() / 'losg')
+        self.save_dir = Path(save_dir) if save_dir else (Path.cwd() / 'logs')
         self.save_dir.mkdir(exist_ok=True, parents=True)
 
         self.log_filename = f'{datetime.datetime.now().strftime('%y%m%d-%H%M%S')}.log' \

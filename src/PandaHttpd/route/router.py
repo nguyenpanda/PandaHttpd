@@ -4,6 +4,7 @@ from ..http import JsonResponse, Response, PlainTextResponse
 from ..utils import MappingStr
 from .._typing import GenericHandler, HeaderHandler, UserFunc, HasPrefix
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Type, List, Sequence
     
 
@@ -11,8 +12,8 @@ class Router:
     
     def __init__(self,
         routes: Optional[Sequence[BaseRoute]] = None,
-        default_handler: Optional[HeaderHandler] = None,
-    ):
+        default_handler: Optional[GenericHandler | HeaderHandler] = None,
+    ) -> None:
         self.routes: List[BaseRoute] = [] if routes is None else list(routes)
         self.default_handler: HeaderHandler = \
             self.set_default_handler(default_handler) \
@@ -52,17 +53,32 @@ class Router:
                 return route
         return None
     
-    def set_default_handler(self, handler: GenericHandler) -> HeaderHandler:
+    def set_default_handler(self, handler: Optional[GenericHandler | HeaderHandler]) -> HeaderHandler:
+        if handler is None:
+            return self.not_found_handler
+            
         assert callable(handler), 'Default handler must be a callable'
-        assert issubclass(handler.__annotations__.get('return', Response), Response), 'Default handler must return a Response instance'
         
-        def wrapper(dict_headers: MappingStr | None, *args, **kwargs) -> Response:
-            return handler(*args, **kwargs)
+        from typing import Union, Awaitable, cast
         
-        self.default_handler = wrapper
-        return wrapper
+        async def wrapper(dict_headers: MappingStr | None, executor: Optional[ThreadPoolExecutor] = None, *args, **kwargs) -> Response:
+            result: Union[Response, Awaitable[Response]] = handler(*args, **kwargs)
+            
+            if hasattr(result, '__await__'):
+                awaitable_result: Awaitable[Response] = cast(Awaitable[Response], result)
+                return await awaitable_result
+            return cast(Response, result)
+        
+        typed_wrapper: HeaderHandler = cast(HeaderHandler, wrapper)
+        self.default_handler = typed_wrapper
+        return typed_wrapper
 
-    def not_found_handler(self, dict_headers, *args, **kwargs) -> Response:
+    async def not_found_handler(
+        self,
+        dict_headers,
+        executor: Optional[ThreadPoolExecutor] = None,
+        *args, **kwargs
+    ) -> Response:
         return PlainTextResponse(
             status_code=404,
             body=b'404 Not Found'

@@ -2,6 +2,7 @@ from .status import HttpStatus
 from .._typing import Socket
 from ..utils import MappingStr, CaseInsensitiveDict, CookieDict
 
+import asyncio
 import json
 from typing_extensions import Any, Dict, List, Optional, Self
 
@@ -15,10 +16,15 @@ class Response:
   		body: Any = None,
     	media_type: Optional[str] = None,
 		dict_headers: Optional[MappingStr] = None,
-    ):
-        self.status_code: HttpStatus = (status_code if isinstance(status_code, HttpStatus) else HttpStatus(status_code))
+    ) -> None:
+        if isinstance(status_code, HttpStatus):
+            self.status_code: HttpStatus = status_code
+        else:
+            self.status_code = HttpStatus(status_code)  # type: ignore[call-arg]
+            
         if media_type is not None:
             self.media_type: str = media_type
+            
         self.body: bytes = self.render(body)
         self.list_headers: List[tuple[bytes, bytes]] = self.init_header(dict_headers)
         self._header: Dict[bytes, bytes] = {}
@@ -85,7 +91,7 @@ class Response:
         value: str,
         expires: Optional[str] = None,
         max_age: Optional[int] = None,
-    ):
+    ) -> None:
         raise NotImplementedError()
     
     def delete_cookies(self,
@@ -93,13 +99,28 @@ class Response:
         value: str = '',
         expires: Optional[str] = None,
         max_age: Optional[int] = None,
-    ):
+    ) -> None:
         raise NotImplementedError()
+    
+    async def send(self, writer: asyncio.StreamWriter) -> None:
+        """Async response sender using StreamWriter"""
+        header_block = b''
+        for k, v in self.list_headers:
+            header_block += k + b': ' + v + b'\r\n'
+        header_block += b'\r\n'
+        
+        writer.write(self.status_line + header_block)
+        
+        if self.body:
+            writer.write(self.body)
+        
+        await writer.drain()
     
     def __call__(self, 
         sender: Socket, 
         receiver: Optional[Socket], 
     ) -> None:
+        """Legacy sync response sender (for backward compatibility)"""
         header_block = b''
         for k, v in self.list_headers:
             header_block += k + b': ' + v + b'\r\n'
@@ -179,7 +200,7 @@ class RedirectResponse(Response):
         url: str | None = None,
         status_code: int | HttpStatus = 301, 
         dict_headers: CaseInsensitiveDict | None = None
-    ):
+    ) -> None:
         body_params = {}
         if body is not None:
             body_params = {str(k).lower(): v for k, v in body.items()}

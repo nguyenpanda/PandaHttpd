@@ -13,6 +13,7 @@ __all__ = [
     'IPAddress',
     'PortType',
     'SocketAddress',
+    'Socket',
     
     # http
     'HeadersType',

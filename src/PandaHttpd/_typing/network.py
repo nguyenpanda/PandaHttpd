@@ -1,4 +1,5 @@
 from typing import Union
+from socket import socket as Socket
 from ipaddress import IPv4Network, IPv6Network
 
 

@@ -14,14 +14,14 @@ class Middleware:
         assert isinstance(middleware, BaseMiddleware), 'Middleware must be an instance of BaseMiddleware'
         self.middlewares.append(middleware)
         
-    def pre(self, dict_headers: MappingStr, request: Request) -> MappingStr:
+    async def pre(self, dict_headers: MappingStr, request: Request) -> MappingStr:
         for middleware in self.middlewares:
-            dict_headers = middleware.pre(dict_headers, request)
+            dict_headers = await middleware.pre(dict_headers, request)
         return dict_headers
         
-    def post(self, dict_headers: MappingStr, response: Response) -> Response:
+    async def post(self, dict_headers: MappingStr, response: Response) -> Response:
         for middleware in reversed(self.middlewares):
-            response = middleware.post(dict_headers, response)
+            response = await middleware.post(dict_headers, response)
         return response
         
     def __repr__(self) -> str:

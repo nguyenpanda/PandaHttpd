@@ -4,13 +4,13 @@ from ..utils import MappingStr
 
 class BaseMiddleware:
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         pass
     
-    def pre(self, dict_headers: MappingStr, request: Request) -> MappingStr:
+    async def pre(self, dict_headers: MappingStr, request: Request) -> MappingStr:
         return dict_headers
     
-    def post(self, dict_headers: MappingStr, response: Response) -> Response:
+    async def post(self, dict_headers: MappingStr, response: Response) -> Response:
         return response
 	
     def __repr__(self) -> str:
@@ -22,13 +22,13 @@ class BaseMiddleware:
 
 class DefaultMiddleware(BaseMiddleware):
     
-    def pre(self, dict_headers: MappingStr, request: Request) -> MappingStr:
+    async def pre(self, dict_headers: MappingStr, request: Request) -> MappingStr:
         dict_headers['method'] = request.method
         dict_headers['path'] = request.path
         dict_headers['protocol'] = request._protocol
         return dict_headers
 
-    def post(self, dict_headers: MappingStr, response: Response) -> Response:
+    async def post(self, dict_headers: MappingStr, response: Response) -> Response:
         response.update_header('X-Processed-By', 'DefaultMiddleware')
         return response
     

@@ -1,10 +1,10 @@
 from ..utils import CaseInsensitiveDict, CookieDict
 
+import asyncio
 import enum
 import json
 
 from urllib.parse import parse_qs
-from nguyenpanda.swan import green
 
 from typing import Any, Tuple, Dict, Optional
 from .._typing import Socket
@@ -56,9 +56,17 @@ class HttpConnection:
 
 class Request(HttpConnection):
 
-    def __init__(self, client_connection: Socket) -> None:
+    def __init__(self, 
+        reader: Optional[asyncio.StreamReader] = None,
+        writer: Optional[asyncio.StreamWriter] = None,
+        client_connection: Optional[Socket] = None,
+    ) -> None:
         super().__init__()
-        self.client_connection: Socket = client_connection
+        # Support both new async streams and legacy socket
+        self.reader: Optional[asyncio.StreamReader] = reader
+        self.writer: Optional[asyncio.StreamWriter] = writer
+        self.client_connection: Optional[Socket] = client_connection
+        
         self._method: str = ''
         self._path: str = ''
         self._protocol: str = ''
@@ -67,15 +75,19 @@ class Request(HttpConnection):
         self._body: bytes | Dict[str, Any] = b''
         self._raw_data: bytearray | None = None
 
-    def handle(self):
-        self._raw_data = self._recv_header()
+    async def handle(self) -> None:
+        """Async request handler using StreamReader"""
+        if self.reader is None:
+            raise ValueError('StreamReader not provided for async request handling')
+            
+        self._raw_data = await self._recv_header()
         if self._raw_data is None:
             return
         
         self._method, self._path, self._protocol, self._headers \
             = self._parse_header(self._raw_data)
         
-        body = self._recv_body(self._raw_data)
+        body = await self._recv_body(self._raw_data)
         self._raw_data.extend(body)
         
         content_length = int(self._headers.get('content-length', 0))
@@ -148,10 +160,17 @@ class Request(HttpConnection):
         
         return cookie
 
-    def _recv_header(self) -> Optional[bytearray]:
+    async def _recv_header(self) -> Optional[bytearray]:
+        """Async header receiver using StreamReader"""
+        assert self.reader is not None, 'StreamReader must be initialized'
+        
         buffer = bytearray()
         while True:
-            chunk = self.client_connection.recv(4096)
+            try:
+                chunk = await self.reader.read(4096)
+            except Exception:
+                return None
+                
             if not chunk:
                 return None
             buffer.extend(chunk)
@@ -160,7 +179,9 @@ class Request(HttpConnection):
                 break
         return buffer
        
-    def _recv_body(self, header_buffer: bytearray) -> bytearray:
+    async def _recv_body(self, header_buffer: bytearray) -> bytearray:
+        """Async body receiver using StreamReader"""
+        assert self.reader is not None, 'StreamReader must be initialized'
         idx = header_buffer.find(b'\r\n\r\n')
         body_start = header_buffer[idx+4:]
 
@@ -174,7 +195,7 @@ class Request(HttpConnection):
         remaining = content_length - already
 
         while remaining > 0:
-            chunk = self.client_connection.recv(min(4096, remaining))
+            chunk = await self.reader.read(min(4096, remaining))
             if not chunk:
                 break
             body.extend(chunk)

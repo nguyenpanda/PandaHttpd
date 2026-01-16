@@ -26,6 +26,7 @@ nguyenpanda-httpd = { workspace = true, editable = true }
 
 [dependency-groups]
 dev = [
+    "mypy>=1.19.1",
     "nguyenpanda-httpd",
     "pylint[spelling]>=4.0.4",
 ]

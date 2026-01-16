@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+from .network import Socket
 from typing import TYPE_CHECKING, MutableMapping
 
-from socket import socket as Socket
 from typing import (
     Any, 
     Callable, 
@@ -12,7 +12,9 @@ from typing import (
     Type, 
     TypeVar, 
     Protocol, 
-    runtime_checkable
+    runtime_checkable,
+    Coroutine,
+    Awaitable,
 )
 
 if TYPE_CHECKING:
@@ -32,10 +34,10 @@ class HasPrefix(Protocol):
     
     
 class GenericHandler(Protocol):
-    def __call__(self, *args: Any, **kwds: Any) -> 'Response': ...
+    def __call__(self, *args: Any, **kwds: Any) -> 'Response' | Awaitable[Response]: ...
     
         
 class HeaderHandler(Protocol):
-    def __call__(self, dict_headers: MappingStr | None, *args: Any, **kwds: Any) -> Response: ...
+    def __call__(self, dict_headers: MappingStr | None, *args: Any, **kwds: Any) -> 'Response' | Awaitable[Response]: ...
     
 AnyHandler = Union[GenericHandler, HeaderHandler]

@@ -3,12 +3,14 @@ from ..http import JsonResponse, Response
 from .._typing import UserFunc, HasPrefix
 from ..utils import MappingStr
 
+import asyncio
+import inspect
 import mimetypes
-from typing import Optional, Type
+from concurrent.futures import ThreadPoolExecutor
+from typing import Awaitable, Optional, Type
 from pathlib import Path
 
 
-# TODO: MUST SUPPORT MIDDLEWARE
 class BaseRoute:
     
     def __init__(self,
@@ -16,7 +18,7 @@ class BaseRoute:
         method: str,
         endpoint: UserFunc,
         response_class: Type[Response] = JsonResponse,
-    ):
+    ) -> None:
         self.path: str = path
         self.method: str = method.upper()
         self.endpoint: UserFunc = endpoint
@@ -26,11 +28,21 @@ class BaseRoute:
         assert callable(self.endpoint) or self.endpoint is None, 'Endpoint must be a callable or None'
         assert issubclass(response_class, Response), 'Response class must be a subclass of Response'
 		
-    def handle(self, 
+    async def handle(self, 
         dict_headers: Optional[MappingStr],
+        executor: Optional[ThreadPoolExecutor] = None,
         *args, **kwargs,
     ) -> Response:
-        body = self.endpoint(*args, **kwargs)
+        """Async route handler with support for both sync and async endpoints"""
+        if inspect.iscoroutinefunction(self.endpoint):
+            body = await self.endpoint(*args, **kwargs)
+        else:
+            if executor:
+                loop = asyncio.get_event_loop()
+                body = await loop.run_in_executor(executor, self.endpoint, *args, **kwargs)
+            else:
+                body = self.endpoint(*args, **kwargs)
+        
         if isinstance(body, Response):
             return body
         
@@ -67,7 +79,7 @@ class Mount(BaseRoute):
         path: str,
         handler: HasPrefix,
         file_handler: FileHandler = FileHandler(),
-    ):
+    ) -> None:
         self.file_handler: FileHandler = file_handler
         self.handler = handler
         super().__init__(
@@ -80,8 +92,9 @@ class Mount(BaseRoute):
     def match(self, path: str, method: str) -> bool:
         return path.startswith(self.path) and method.upper() == 'GET'
         
-    def handle(self,
-    	dict_headers: MappingStr,
+    async def handle(self,
+    	dict_headers: Optional[MappingStr],
+        executor: Optional[ThreadPoolExecutor] = None,
         *args, **kwargs,
     ) -> Response:
         """
@@ -92,14 +105,20 @@ class Mount(BaseRoute):
 		file_path = `<physical_path_to_mount>/path/to/file.png`
         """
         
+        if dict_headers is None or 'path' not in dict_headers:
+            raise ValueError("dict_headers must contain 'path' key")
+            
         request_path: Path = Path(dict_headers['path'])
         # TODO: FIX HARD CODED PATH JOINING
         file_path = Path(self.handler.prefix) / request_path.relative_to(self.path)
         if not (file_path.exists() and file_path.is_file()):
-            response: Response = self.file_handler.handler(dict_headers, *args, **kwargs)
-            return response
+            response: Response | Awaitable[Response] = self.file_handler.handler(dict_headers, executor, *args, **kwargs)
+            if hasattr(response, '__await__'):
+                return await response # type: ignore
+            return response  # type: ignore
         
-        body: bytes | None = self.endpoint(file_path, *args, **kwargs)
+        # Read file async using executor
+        body: bytes | None = await self.endpoint(file_path, executor, *args, **kwargs)
         media_type, _ = mimetypes.guess_type(file_path)
         
         res_ins: Response = self.response_class(

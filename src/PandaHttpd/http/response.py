@@ -20,7 +20,7 @@ class Response:
         if media_type is not None:
             self.media_type: str = media_type
         self.body: bytes = self.render(body)
-        self.list_headers: List[tuple[bytes, bytes]] = self.init_header(dict_headers)
+        self._list_headers: List[tuple[bytes, bytes]] = self.init_header(dict_headers)
         self._header: Dict[bytes, bytes] = {}
     
     def render(self, content: Any) -> bytes:
@@ -65,7 +65,7 @@ class Response:
     @property
     def header(self) -> Dict[bytes, bytes]:
         if not self._header:
-            for k, v in self.list_headers:
+            for k, v in self._list_headers:
                 self._header[k] = v
             
         return self._header
@@ -77,7 +77,7 @@ class Response:
     def update_header(self, key: str, value: str) -> None:
         k = key.lower().encode(self.charset)
         v = value.encode(self.charset)
-        self.list_headers.append((k, v))
+        self._list_headers.append((k, v))
         self._header[k] = v
     
     def set_cookies(self,
@@ -100,8 +100,8 @@ class Response:
         sender: Socket, 
         receiver: Optional[Socket], 
     ) -> None:
-        header_block = b''
-        for k, v in self.list_headers:
+        header_block = bytearray()
+        for k, v in self.header.items():
             header_block += k + b': ' + v + b'\r\n'
         header_block += b'\r\n'
         

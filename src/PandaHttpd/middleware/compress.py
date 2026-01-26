@@ -20,16 +20,66 @@ class GZipMiddleware(BaseMiddleware):
        - Content-Length: updated to compressed size
        - Vary: Accept-Encoding
     """
+    COMPRESS_TYPE: str = 'gzip'
     GZIP_MIN_SIZE = 500
     GZIP_CONTENT_TYPES = (
-        'text/',
-        'application/json',
+        # Web Document Formats
+        'text/html',
+        'text/css',
+        'text/plain',
+        'text/xml',
+        'text/markdown',
+        'text/cache-manifest',
+        'text/vcard',
+        'text/vnd.rim.location.xloc',
+        'text/vtt',
+        'text/x-component',
+        'text/x-cross-domain-policy',
+
+        # Scripts and JSON
         'application/javascript',
+        'application/json',
+        'application/x-javascript',
+        'application/ld+json',
+        'application/manifest+json',
+        'application/schema+json',
+        'application/vnd.geo+json',
+        'application/x-web-app-manifest+json',
+        'text/javascript', # Legacy support
+
+        # XML and Structured Data
         'application/xml',
+        'application/atom+xml',
+        'application/rss+xml',
         'application/xhtml+xml',
+        'application/soap+xml',
+        'application/rdf+xml',
+        'application/vnd.mozilla.xul+xml',
+        'application/wsdl+xml',
+        
+        # YAML
+        'text/yaml',
+        'text/x-yaml',
+        'application/yaml',
+        'application/x-yaml',
+
+        # Fonts (Only specific types!)
+        # WOFF and WOFF2 are already compressed. Only compress these older/raw formats:
+        'application/vnd.ms-fontobject', # EOT
+        'application/x-font-ttf',        # TTF
+        'application/x-font-opentype',   # OTF
+        'application/x-font-truetype',
+        'font/eot',
+        'font/opentype',
+        'font/otf',
+        'font/ttf',
+        
+        # Images (Only Vector!)
         'image/svg+xml',
+        'image/x-icon', # Favicons often compress well
+        'image/bmp',    # Uncompressed bitmap
     )
-    
+        
     def __init__(self, min_size: int = GZIP_MIN_SIZE, compress_level: int = 6):
         """
         min_size: Minimum response body size to trigger compression (default: 500 bytes)
@@ -38,14 +88,14 @@ class GZipMiddleware(BaseMiddleware):
         super().__init__()
         self.min_size = min_size
         self.compress_level = compress_level
-    
-    def pre(self, dict_headers: MappingStr, request: Request) -> MappingStr:
-        accept_encoding = request.headers.get('accept-encoding', '')
-        dict_headers['_gzip'] = 'gzip' if 'gzip' in accept_encoding.lower() else ''
-        return dict_headers
-    
+        self.compress_type = self.COMPRESS_TYPE
+        
     def post(self, dict_headers: MappingStr, response: Response) -> Response:
-        if response.header.pop(b'_gzip', b'') != b'gzip':
+        accept_encoding = str(response.header.get(b'accept-encoding', b''))
+        if self.compress_type not in accept_encoding.lower():
+            return response
+
+        if response.header.get(b'content-encoding'):
             return response
         
         if not response.body or len(response.body) < self.min_size:
@@ -54,17 +104,16 @@ class GZipMiddleware(BaseMiddleware):
         if not self._is_compressible_content_type(response):
             return response
         
-        if not b'content-encoding' in response.header.keys():
-            return response
-        
         compressed_body = gzip.compress(response.body, compresslevel=self.compress_level)
+        
         if len(compressed_body) >= len(response.body):
             return response
         
         response.body = compressed_body
         response.update_header('content-length', str(len(compressed_body)))
-        response.update_header('content-encoding', 'gzip')
+        response.update_header('content-encoding', self.COMPRESS_TYPE)
         response.update_header('vary', 'Accept-Encoding')
+        
         return response
     
     def _is_compressible_content_type(self, response: Response) -> bool:

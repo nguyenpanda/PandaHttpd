@@ -8,6 +8,10 @@ from typing import Optional, Type
 from pathlib import Path
 
 
+mimetypes.add_type("application/x-yaml", ".yaml")
+mimetypes.add_type("application/x-yaml", ".yml")
+
+
 # TODO: MUST SUPPORT MIDDLEWARE
 class BaseRoute:
     

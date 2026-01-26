@@ -1,54 +1,14 @@
-from ..utils import CaseInsensitiveDict, CookieDict
+from ..utils import (
+    CaseInsensitiveDict, 
+    CookieDict,
+    UrlParser,
+    RequestBodyParser,
+)
 
-import enum
-import json
-
-from urllib.parse import parse_qs
-from nguyenpanda.swan import green
 
 from typing import Any, Tuple, Dict, Optional
 from .._typing import Socket
 
-
-class ParseRequestBody:
-
-    class Type(enum.StrEnum):
-        TEXT = 'text/plain'
-        FORM = 'application/x-www-form-urlencoded'
-        JSON = 'application/json'
-        XML = 'application/xml'
-
-    @staticmethod
-    def parse(content_type: str, content: bytes) -> Dict[str, Any]:
-        _t = ParseRequestBody.Type
-        if content_type.startswith((_t.FORM, _t.TEXT)):
-            return ParseRequestBody.parse_form(content.decode('utf-8', 'ignore'))
-        elif content_type.startswith(_t.JSON):
-            return ParseRequestBody.parse_json(content)
-        elif content_type.startswith(_t.XML):
-            return ParseRequestBody.parse_xml(content)
-        else:
-            raise TypeError(f'Unsupported Content-Type: {content_type}')
-
-    @staticmethod
-    def parse_form(content: str) -> Dict[str, Any]:
-        result = {}
-        parsed = parse_qs(content)
-        for k, v in parsed.items():
-            result[k] = v[0] if v else ''
-        return result
-
-    @staticmethod
-    def parse_json(content: bytes) -> Dict[str, Any]:
-        try:
-            return json.loads(content.decode('utf-8'))
-        except Exception:
-            raise ValueError('Invalid JSON body')
-
-    @staticmethod
-    def parse_xml(content: bytes) -> Dict[str, Any]:
-        raise NotImplementedError('XML parsing not implemented')
-    
 
 class HttpConnection:
     pass
@@ -58,7 +18,7 @@ class Request(HttpConnection):
 
     def __init__(self, client_connection: Socket) -> None:
         super().__init__()
-        self.client_connection: Socket = client_connection
+        self._client_connection: Socket = client_connection
         self._method: str = ''
         self._path: str = ''
         self._protocol: str = ''
@@ -66,14 +26,17 @@ class Request(HttpConnection):
         self._cookie: CookieDict = CookieDict()
         self._body: bytes | Dict[str, Any] = b''
         self._raw_data: bytearray | None = None
+        self._query_params: Dict[str, str] = {}
 
     def handle(self):
         self._raw_data = self._recv_header()
         if self._raw_data is None:
             return
         
-        self._method, self._path, self._protocol, self._headers \
+        self._method, raw_url_path, self._protocol, self._headers \
             = self._parse_header(self._raw_data)
+            
+        self._path, self._query_params = UrlParser.parse_url(raw_url_path)
         
         body = self._recv_body(self._raw_data)
         self._raw_data.extend(body)
@@ -82,7 +45,7 @@ class Request(HttpConnection):
         if content_length > 0:
             ct = self._headers.get('content-type', '')
             if self._method == 'POST' or self._method == 'PUT':
-                self._body = ParseRequestBody.parse(ct, body)
+                self._body = RequestBodyParser.parse(ct, body)
             else:
                 self._body = body
                 
@@ -95,6 +58,10 @@ class Request(HttpConnection):
     @property
     def path(self) -> str:
         return self._path
+    
+    @property
+    def query_params(self) -> Dict[str, str]:
+        return self._query_params
 
     @property
     def headers(self) -> CaseInsensitiveDict:
@@ -111,7 +78,11 @@ class Request(HttpConnection):
     @property
     def protocol(self) -> str:
         return self._protocol
-
+    
+    @property
+    def client_connection(self) -> Socket:
+        return self._client_connection
+    
     def _parse_header(self, raw_data: bytearray) -> Tuple[str, str, str, CaseInsensitiveDict]:
         idx = raw_data.find(b'\r\n\r\n')
         header_bytes = raw_data[:idx]
@@ -126,7 +97,14 @@ class Request(HttpConnection):
         if not lines or not lines[0]:
             return '', '', '', CaseInsensitiveDict()
 
-        method, path, protocol = lines[0].split(None)
+        parts = lines[0].split(None)
+        if len(parts) == 3:
+            method, path, protocol = parts
+        elif len(parts) == 2:
+            method, path = parts
+            protocol = "HTTP/1.1"
+        else:
+            method, path, protocol = "GET", "/", "HTTP/1.1"
         
         headers = CaseInsensitiveDict()
         for line in lines[1:]:
@@ -144,14 +122,14 @@ class Request(HttpConnection):
         for pair in cookie_str.split(';'):
             if '=' in pair:
                 k, v = pair.strip().split('=', 1)
-                cookie[k] = v
+                cookie[k] = UrlParser.unquote(v)
         
         return cookie
 
     def _recv_header(self) -> Optional[bytearray]:
         buffer = bytearray()
         while True:
-            chunk = self.client_connection.recv(4096)
+            chunk = self._client_connection.recv(4096)
             if not chunk:
                 return None
             buffer.extend(chunk)
@@ -174,7 +152,7 @@ class Request(HttpConnection):
         remaining = content_length - already
 
         while remaining > 0:
-            chunk = self.client_connection.recv(min(4096, remaining))
+            chunk = self._client_connection.recv(min(4096, remaining))
             if not chunk:
                 break
             body.extend(chunk)

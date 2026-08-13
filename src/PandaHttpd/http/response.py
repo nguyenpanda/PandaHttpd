@@ -119,6 +119,10 @@ class HtmlResponse(Response):
     media_type: str = 'text/html'
     
 
+class XmlResponse(Response):
+    media_type: str = 'application/xml'
+    
+
 class CssResponse(Response):
     media_type: str = 'text/css'
     

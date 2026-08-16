@@ -97,9 +97,13 @@ class Mount(BaseRoute):
         """
         
         request_path: Path = Path(dict_headers['path'])
-        # TODO: FIX HARD CODED PATH JOINING
-        file_path = Path(self.handler.prefix) / request_path.relative_to(self.path)
-        if not (file_path.exists() and file_path.is_file()):
+        mount_root = Path(self.handler.prefix).resolve()
+        file_path = (Path(self.handler.prefix) / request_path.relative_to(self.path)).resolve()
+        if (
+            not file_path.is_relative_to(mount_root)
+            or not file_path.exists()
+            or not file_path.is_file()
+        ):
             response: Response = self.file_handler.handler(dict_headers, *args, **kwargs)
             return response
         

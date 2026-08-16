@@ -16,6 +16,10 @@ class HttpConnection:
 
 class Request(HttpConnection):
 
+    SOCKET_TIMEOUT_SECONDS: float = 30.0
+    MAX_HEADER_SIZE: int = 64 * 1024
+    MAX_BODY_SIZE: int = 256 * 1024 * 1024
+
     def __init__(self, client_connection: Socket) -> None:
         super().__init__()
         self._client_connection: Socket = client_connection
@@ -29,6 +33,7 @@ class Request(HttpConnection):
         self._query_params: Dict[str, str] = {}
 
     def handle(self):
+        self._client_connection.settimeout(self.SOCKET_TIMEOUT_SECONDS)
         self._raw_data = self._recv_header()
         if self._raw_data is None:
             return
@@ -133,16 +138,20 @@ class Request(HttpConnection):
             if not chunk:
                 return None
             buffer.extend(chunk)
-                
+            if len(buffer) > self.MAX_HEADER_SIZE:
+                raise ValueError('Request header too large')
+
             if b'\r\n\r\n' in buffer:
                 break
         return buffer
-       
+
     def _recv_body(self, header_buffer: bytearray) -> bytearray:
         idx = header_buffer.find(b'\r\n\r\n')
         body_start = header_buffer[idx+4:]
 
         content_length = int(self._headers.get('content-length', 0))
+        if content_length > self.MAX_BODY_SIZE:
+            raise ValueError('Request body too large')
         already = len(body_start)
 
         if already >= content_length:

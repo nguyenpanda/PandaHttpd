@@ -39,7 +39,7 @@ class PandaHttpd:
         
         self.logger = logger.setup() \
             if isinstance(logger, PandaLogger) \
-            else PandaLogger()
+            else PandaLogger().setup()
         self.logger.debug(f'PandaHttpd Initialized with IP: {self.ip}, Port: {self.port}')
 
     def route(self, 

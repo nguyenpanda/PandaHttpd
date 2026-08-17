@@ -1,5 +1,5 @@
 from ..filehandler import FileHandler
-from ..http import JsonResponse, Response
+from ..http import FileResponse, HttpStatus, JsonResponse, Response
 from .._typing import UserFunc, HasPrefix
 from ..utils import MappingStr
 
@@ -66,7 +66,13 @@ class Route(BaseRoute):
 
 
 class Mount(BaseRoute):
-    
+
+    # Above this, a file is streamed rather than read into memory. Chosen so
+    # the site's own CSS and JS stay on the in-memory path -- they are the
+    # assets worth compressing, and the compression middleware needs a body to
+    # work on.
+    STREAM_THRESHOLD: int = 256 * 1024
+
     def __init__(self,
         path: str,
         handler: HasPrefix,
@@ -107,14 +113,42 @@ class Mount(BaseRoute):
             response: Response = self.file_handler.handler(dict_headers, *args, **kwargs)
             return response
         
-        body: bytes | None = self.endpoint(file_path, *args, **kwargs)
         media_type, _ = mimetypes.guess_type(file_path)
-        
+        media_type = media_type or 'application/octet-stream'
+
+        # A range request, or a file big enough that holding it in memory
+        # matters, is streamed from disk. Everything else keeps the in-memory
+        # path, because that is what the compression middleware can act on --
+        # and the small text assets are exactly the ones worth compressing.
+        wants_range = bool(dict_headers.get('range'))
+        if wants_range or file_path.stat().st_size >= self.STREAM_THRESHOLD:
+            return FileResponse(
+                file_path,
+                media_type=media_type,
+                request_headers=dict_headers,
+            )
+
+        conditional = FileResponse(
+            file_path, media_type=media_type, request_headers=dict_headers
+        )
+        if conditional.status_code == HttpStatus.NOT_MODIFIED:
+            # The client already holds this. Answering with the file again is
+            # the single most wasteful thing a static server can do.
+            return conditional
+
+        body: bytes | None = self.endpoint(file_path, *args, **kwargs)
+        # dict_headers is deliberately not passed through: it holds routing
+        # details and the client's own request headers, and echoing those back
+        # put `path`, `method` and `protocol` on every static response.
         res_ins: Response = self.response_class(
             status_code=200,
 			body=body,
-			media_type=media_type or 'application/octet-stream',
-			dict_headers=dict_headers,
+			media_type=media_type,
+			dict_headers={
+                'ETag': conditional.etag,
+                'Last-Modified': conditional.last_modified,
+                'Accept-Ranges': 'bytes',
+            },
 		)
         return res_ins
     

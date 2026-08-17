@@ -4,6 +4,7 @@ from .request import (
 )
 from .response import (
     Response,
+    FileResponse,
     PlainTextResponse,
     HtmlResponse,
     XmlResponse,
@@ -27,6 +28,7 @@ __all__ = [
     'HttpStatus',
     'Request',
     'Response',
+    'FileResponse',
     'PlainTextResponse',
     'HtmlResponse',
     'XmlResponse',

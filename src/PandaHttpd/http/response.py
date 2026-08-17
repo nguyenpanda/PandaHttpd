@@ -3,7 +3,11 @@ from .._typing import Socket
 from ..utils import MappingStr, CaseInsensitiveDict, CookieDict
 
 import json
-from typing_extensions import Any, Dict, List, Optional, Self
+import os
+import re
+from email.utils import formatdate, parsedate_to_datetime
+from pathlib import Path
+from typing_extensions import Any, Dict, List, Optional, Self, Tuple
 
 
 class Response:
@@ -110,6 +114,194 @@ class Response:
         if self.body:
             sender.sendall(self.body)
             
+
+_RANGE_HEADER = re.compile(r'^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*(?:,.*)?$', re.IGNORECASE)
+
+
+class FileResponse(Response):
+    """Serves a file from disk without reading it into memory.
+
+    Every other response type renders its whole body up front and hands it to
+    one sendall(). For a page that is right; for a download it means the file
+    is resident in RAM for as long as it takes to send, once per worker thread
+    doing so. This reads and writes in chunks instead, so the memory a
+    download costs is bounded by the chunk size rather than by the file.
+
+    It also answers the two things a browser asks about a file it has seen
+    before, or wants only part of:
+
+      Range   -- without it, seeking in a video is not possible: the player has
+                 no way to ask for the middle, so every scrub refetches from
+                 byte zero.
+      ETag /
+      Last-Modified -- so an unchanged file costs a 304 and no body at all.
+
+    Additive by design: nothing that does not construct one of these behaves
+    any differently.
+    """
+
+    media_type: str = 'application/octet-stream'
+    chunk_size: int = 64 * 1024
+
+    def __init__(self,
+        path: str | os.PathLike,
+        media_type: Optional[str] = None,
+        dict_headers: Optional[MappingStr] = None,
+        request_headers: Optional[MappingStr] = None,
+        status_code: int | HttpStatus = 200,
+    ):
+        self.path: Path = Path(path)
+        stat = self.path.stat()  # Raises for a missing file, which is the caller's to handle.
+        self.file_size: int = stat.st_size
+        self.last_modified: str = formatdate(stat.st_mtime, usegmt=True)
+        # Size and mtime together change whenever the bytes do, and cost a
+        # stat() rather than a read of the whole file to compute.
+        self.etag: str = f'"{stat.st_size:x}-{int(stat.st_mtime):x}"'
+
+        asked = self._normalise(request_headers)
+        headers: Dict[str, str] = dict(dict_headers or {})
+        headers.setdefault('Accept-Ranges', 'bytes')
+        headers['ETag'] = self.etag
+        headers['Last-Modified'] = self.last_modified
+
+        self._start = 0
+        self._length = self.file_size
+
+        if self._is_unchanged(asked):
+            # 304 carries no body, and must not carry a Content-Length for one.
+            self._length = 0
+            super().__init__(HttpStatus.NOT_MODIFIED, b'', media_type, headers)
+            return
+
+        wanted = self._parse_range(asked.get('range'))
+        if wanted is None:
+            headers['Content-Length'] = str(self.file_size)
+            super().__init__(status_code, b'', media_type, headers)
+            return
+
+        start, end = wanted
+        if start >= self.file_size:
+            # The client asked for bytes past the end. Saying so, with the real
+            # size, is what lets it ask again correctly.
+            self._length = 0
+            headers['Content-Range'] = f'bytes */{self.file_size}'
+            super().__init__(HttpStatus.RANGE_NOT_SATISFIABLE, b'', media_type, headers)
+            return
+
+        end = min(end, self.file_size - 1)
+        self._start = start
+        self._length = end - start + 1
+        headers['Content-Range'] = f'bytes {start}-{end}/{self.file_size}'
+        headers['Content-Length'] = str(self._length)
+        super().__init__(HttpStatus.PARTIAL_CONTENT, b'', media_type, headers)
+
+    @staticmethod
+    def _normalise(request_headers: Optional[MappingStr]) -> Dict[str, str]:
+        if not request_headers:
+            return {}
+        return {str(k).lower(): v for k, v in request_headers.items()}
+
+    def _is_unchanged(self, asked: Dict[str, str]) -> bool:
+        """Whether the copy the client already holds is still current.
+
+        If-None-Match wins outright when present, as the specification
+        requires: an entity tag is exact where a timestamp is only to the
+        second.
+        """
+        if 'if-none-match' in asked:
+            offered = [tag.strip() for tag in str(asked['if-none-match']).split(',')]
+            return '*' in offered or self.etag in offered
+
+        since = asked.get('if-modified-since')
+        if not since:
+            return False
+        try:
+            return parsedate_to_datetime(since) >= parsedate_to_datetime(self.last_modified)
+        except (TypeError, ValueError):
+            # An unparseable date is no evidence that anything is unchanged.
+            return False
+
+    def _parse_range(self, header: Optional[str]) -> Optional[Tuple[int, int]]:
+        """The first byte range asked for, or None if there is not a usable one.
+
+        A malformed or unsupported header is deliberately not an error: the
+        specification says to ignore it and serve the whole thing, which is
+        also the behaviour that keeps an odd client working rather than broken.
+        """
+        if not header:
+            return None
+        match = _RANGE_HEADER.match(str(header))
+        if not match:
+            return None
+
+        first, last = match.group(1), match.group(2)
+        if not first and not last:
+            return None
+
+        if not first:
+            # `bytes=-500` means the final 500 bytes, not "from 500 onwards".
+            length = int(last)
+            if length <= 0:
+                return None
+            return max(0, self.file_size - length), self.file_size - 1
+
+        start = int(first)
+        if not last:
+            # Open-ended. A start past the end is still a range -- an
+            # unsatisfiable one, which the caller answers with 416 and the real
+            # size, rather than quietly sending the whole file instead.
+            return start, self.file_size - 1
+
+        end = int(last)
+        if end < start:
+            return None
+        return start, end
+
+    def init_header(self, dict_header: Optional[MappingStr] = None) -> List[tuple[bytes, bytes]]:
+        """Headers exactly as given, plus a content type.
+
+        The inherited version derives Content-Length from the body, which here
+        is empty on purpose -- the length of what will be sent is worked out in
+        __init__ and passed in with the rest.
+        """
+        list_headers = [
+            (str(k).lower().encode(self.charset), str(v).encode(self.charset))
+            for k, v in (dict_header or {}).items()
+        ]
+        if self.media_type is not None and not any(k == b'content-type' for k, _ in list_headers):
+            media_type = self.media_type
+            if media_type.startswith('text/') and 'charset=' not in media_type.lower():
+                media_type += '; charset=' + self.charset
+            list_headers.append((b'content-type', media_type.encode(self.charset)))
+        return list_headers
+
+    def __call__(self,
+        sender: Socket,
+        receiver: Optional[Socket],
+    ) -> None:
+        header_block = bytearray()
+        for k, v in self.header.items():
+            header_block += k + b': ' + v + b'\r\n'
+        header_block += b'\r\n'
+
+        sender.sendall(self.status_line + header_block)
+
+        if self._length <= 0:
+            return
+
+        with self.path.open('rb') as handle:
+            if self._start:
+                handle.seek(self._start)
+            remaining = self._length
+            while remaining > 0:
+                chunk = handle.read(min(self.chunk_size, remaining))
+                if not chunk:
+                    # The file shrank under us. Stopping short is the only
+                    # honest option; the declared length is already sent.
+                    break
+                sender.sendall(chunk)
+                remaining -= len(chunk)
+
 
 class PlainTextResponse(Response):
     media_type: str = 'text/plain'

@@ -16,16 +16,17 @@ dependencies = [
     "typing-extensions>=4.15.0",
 ]
 
-[tool.uv.workspace]
-members = [
-    ".",
-]
-
-[tool.uv.sources]
-nguyenpanda-httpd = { workspace = true, editable = true }
+# No [tool.uv.workspace] here on purpose. Declaring one made this package its
+# own workspace root, which collides with the parent site's workspace when it
+# is checked out as a submodule -- and the documented workaround was to delete
+# the section by hand after every clone, leaving the submodule permanently
+# modified. The parent declares the workspace; standalone use needs no such
+# declaration, since uv installs the project itself in editable mode anyway.
+#
+# The self-referential dev dependency went with it: a package does not need to
+# depend on itself, and `workspace = true` had nothing left to resolve against.
 
 [dependency-groups]
 dev = [
-    "nguyenpanda-httpd",
     "pylint[spelling]>=4.0.4",
 ]

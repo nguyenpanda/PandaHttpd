@@ -123,7 +123,14 @@ class PandaHttpd:
             
             # TODO: Post-Middleware (This part is not implemented yet)
             response: Response = self.middle_ware.post(dict_headers, response)
-            
+
+            # HEAD was routed to the GET handler, so the response is fully
+            # built -- headers, Content-Length and all. Only the body is
+            # withheld, and only at the last moment, so HEAD and GET cannot
+            # report different things about the same resource.
+            if request.method.upper() == 'HEAD':
+                response.suppress_body = True
+
             # Send Response
             response(client_connection, None)
             

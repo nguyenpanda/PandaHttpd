@@ -54,7 +54,18 @@ class BaseRoute:
         self._response_class = response_class
 
     def match(self, path: str, method: str) -> bool:
-        return self.path == path and self.method == method.upper()
+        requested = method.upper()
+        if self.path != path:
+            return False
+        if self.method == requested:
+            return True
+        # HEAD is GET without the body, so anything that answers GET answers
+        # HEAD. RFC 9110 (9.1. Overview): "All general-purpose servers MUST support the methods
+        # GET and HEAD." Without this every HEAD fell through to the default
+        # handler and 404'd, which is what monitors and link checkers use to
+        # decide a site is down. The body is dropped when the response is sent,
+        # not here -- see Response.__call__.
+        return requested == 'HEAD' and self.method == 'GET'
     
     def __str__(self) -> str:
         class_name = self.__class__.__name__
@@ -88,7 +99,7 @@ class Mount(BaseRoute):
         )
         
     def match(self, path: str, method: str) -> bool:
-        return path.startswith(self.path) and method.upper() == 'GET'
+        return path.startswith(self.path) and method.upper() in ('GET', 'HEAD')
         
     def handle(self,
     	dict_headers: MappingStr,

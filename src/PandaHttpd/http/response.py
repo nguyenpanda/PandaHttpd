@@ -13,6 +13,11 @@ from typing_extensions import Any, Dict, List, Optional, Self, Tuple
 class Response:
     media_type: str
     charset: str = 'utf-8'
+
+    # Set by the app for a HEAD request, so the headers are built exactly as
+    # they would be for GET and only the transfer is skipped. Off by default:
+    # nothing that does not set it behaves any differently.
+    suppress_body: bool = False
     
     def __init__(self, 
 		status_code: int | HttpStatus = 200, 
@@ -110,7 +115,10 @@ class Response:
         header_block += b'\r\n'
         
         sender.sendall(self.status_line + header_block)
-        
+
+        if self.suppress_body:
+            return
+
         if self.body:
             sender.sendall(self.body)
             
@@ -285,6 +293,9 @@ class FileResponse(Response):
         header_block += b'\r\n'
 
         sender.sendall(self.status_line + header_block)
+
+        if self.suppress_body:
+            return
 
         if self._length <= 0:
             return

@@ -5,7 +5,7 @@ ROOT_DIR=$(dirname "$DOCS_DIR")
 echo "Generating UML diagrams in $DOCS_DIR/uml"
 mkdir -p "$DOCS_DIR/uml"
 
-pyreverse \
+uv run pyreverse \
     --output pdf \
     --project PandaHttpd \
     --source-roots "$ROOT_DIR/src" \

@@ -83,7 +83,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "nguyenpanda-httpd" },
     { name = "pylint", extra = ["spelling"] },
 ]
 
@@ -97,10 +96,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "nguyenpanda-httpd", virtual = "." },
-    { name = "pylint", extras = ["spelling"], specifier = ">=4.0.4" },
-]
+dev = [{ name = "pylint", extras = ["spelling"], specifier = ">=4.0.4" }]
 
 [[package]]
 name = "platformdirs"

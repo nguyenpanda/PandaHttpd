@@ -69,7 +69,35 @@ class Response:
             if self.media_type.startswith('text/') and 'charset=' not in self.media_type.lower():
                 self.media_type += '; charset=' + self.charset
             list_headers.append((b'content-type', self.media_type.encode(self.charset)))
+
+        self.declare_connection_close(list_headers)
         return list_headers
+
+    @classmethod
+    def declare_connection_close(cls, list_headers: List[tuple[bytes, bytes]]) -> None:
+        """Tell the client this connection is finished after one response.
+
+        This server handles exactly one request per connection -- handle_client
+        shuts the socket down and closes it in a finally block, always. HTTP/1.1
+        defaults the other way: a connection is persistent unless a response
+        says `Connection: close`. Closing silently therefore tells a client the
+        socket is reusable when it is not, and a pooling client (requests,
+        urllib3, any browser) caches it and hands it to the next request.
+
+        Measured before this existed: one request left ten connections in
+        urllib3's pool, every one already closed by this server. Reusing one
+        raises RemoteDisconnected. Idempotent methods are quietly retried, so
+        GETs mostly survive and POST and PATCH do not -- which is why it looked
+        like flakiness that only ever appeared on a loaded CI runner, never on
+        a developer's loopback.
+
+        Announcing the close is the whole fix. Implementing real keep-alive
+        would be the other answer, and a much larger change: it needs per-
+        connection request framing, read timeouts and a socket budget, none of
+        which exist here.
+        """
+        if not any(k == b'connection' for k, _ in list_headers):
+            list_headers.append((b'connection', b'close'))
     
     @property
     def header(self) -> Dict[bytes, bytes]:
@@ -281,6 +309,8 @@ class FileResponse(Response):
             if media_type.startswith('text/') and 'charset=' not in media_type.lower():
                 media_type += '; charset=' + self.charset
             list_headers.append((b'content-type', media_type.encode(self.charset)))
+
+        self.declare_connection_close(list_headers)
         return list_headers
 
     def __call__(self,
